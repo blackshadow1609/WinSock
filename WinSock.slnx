@@ -3,7 +3,7 @@
     <Platform Name="x64" />
     <Platform Name="x86" />
   </Configurations>
-  <Project Path="Client/Client.vcxproj" />
-  <Project Path="Server/Server.vcxproj" />
-  <Project Path="WinSock/WinSock.vcxproj" />
+  <Project Path="Client/Client.vcxproj" Id="502454a9-9103-4fdf-bdb5-1a7606c8dcd5" />
+  <Project Path="Server/Server.vcxproj" Id="2c04aa01-c550-4879-9b2d-c51cbdeea4af" />
+  <Project Path="WinSock/WinSock.vcxproj" Id="4d5be258-b9c5-41e4-8cdb-7fc5c1843902" />
 </Solution>

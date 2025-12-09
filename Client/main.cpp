@@ -78,27 +78,37 @@ int main()
 
 	//5) Отправка данных на сервер:
 	CHAR send_buffer[BUFFER_LENGTH] = "Hello Server, I am client";
-	iResult = send(connect_socket, send_buffer, strlen(send_buffer), 0);
-	if (iResult == SOCKET_ERROR)
-	{
-		dwLastError = WSAGetLastError();
-		cout << "Send failed with error: " << dwLastError << endl;
-		closesocket(connect_socket);
-		freeaddrinfo(result);
-		WSACleanup();
-		return dwLastError;
-	}
-	cout << iResult << " Bytes sent" << endl;
-
-	//6) Ожидание ответа от сервера:
-	CHAR recv_buffer[BUFFER_LENGTH] = {};
 	do
 	{
-		iResult = recv(connect_socket, recv_buffer, BUFFER_LENGTH, 0);
-		if (iResult > 0) cout << iResult << " Bytes received, Message:\t" << recv_buffer << ".\n";
-		else if (iResult == 0) cout << "Connection closed" << endl;
-		else cout << "Receive failed with error: " << WSAGetLastError() << endl;
-	} while (iResult > 0);
+		iResult = send(connect_socket, send_buffer, strlen(send_buffer), 0);
+		if (iResult == SOCKET_ERROR)
+		{
+			dwLastError = WSAGetLastError();
+			cout << "Send failed with error: " << dwLastError << endl;
+			closesocket(connect_socket);
+			freeaddrinfo(result);
+			WSACleanup();
+			return dwLastError;
+		}
+		cout << iResult << " Bytes sent" << endl;
+
+		//6) Ожидание ответа от сервера:
+		CHAR recv_buffer[BUFFER_LENGTH] = {};
+		//do
+		{
+			iResult = recv(connect_socket, recv_buffer, BUFFER_LENGTH, 0);
+			if (iResult > 0) cout << iResult << " Bytes received, Message:\t" << recv_buffer << ".\n";
+			else if (iResult == 0) cout << "Connection closed" << endl;
+			else cout << "Receive failed with error: " << WSAGetLastError() << endl;
+		} //while (iResult > 0);
+
+		ZeroMemory(send_buffer, BUFFER_LENGTH);
+		cout << "Введите сообщение: ";
+		SetConsoleCP(1251);
+		cin.getline(send_buffer, BUFFER_LENGTH);
+		SetConsoleCP(866);
+	} while (strstr(send_buffer, "exit") == 0 && strstr(send_buffer, "quit") == 0);
+	//} while (strcmp(send_buffer, "exit") != 0 && strcmp(send_buffer, "quit") != 0);
 
 	//7) Отключение от сервера:
 	iResult = shutdown(connect_socket, SD_SEND);
