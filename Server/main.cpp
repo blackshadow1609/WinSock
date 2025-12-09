@@ -14,6 +14,9 @@ using namespace std;
 
 #define DEFAULT_PORT "27015"
 #define BUFFER_LENGTH 1460
+#define MAX_CLIENTS		 5
+
+VOID HandleClient(SOCKET client_socket);
 
 int main()
 {
@@ -87,18 +90,38 @@ int main()
 	}
 
 	//6) Обработка запроса от клиентов:
+	INT n = 0;			//количество активных клиентов
+	SOCKET client_sockets[MAX_CLIENTS] = {};
+	DWORD threadIDs[MAX_CLIENTS] = {};
+	HANDLE hThreads[MAX_CLIENTS] = {};
+	cout << hThreads << endl;
+	cout << HandleClient << endl;
 	cout << "Accept client connections..." << endl;
-	SOCKET client_socket = accept(listen_socket, NULL, NULL);
-	if (client_socket == INVALID_SOCKET)
+	do
 	{
-		dwLastError = WSAGetLastError();
-		cout << "Accept failed with error: " << dwLastError << endl;
-		closesocket(listen_socket);
-		freeaddrinfo(result);
-		WSACleanup();
-		return dwLastError;
-	}
+		client_sockets[n] = accept(listen_socket, NULL, NULL);
+		{
+			dwLastError = WSAGetLastError();
+			cout << "Accept failed with error: " << dwLastError << endl;
+			closesocket(listen_socket);
+			freeaddrinfo(result);
+			WSACleanup();
+			return dwLastError;
+		}
+		//HandleClient(client_socket);
+		hThreads[n] = CreateThread(NULL, 0, HandleClient, client_sockets + n, 0, threadIDs + n);
+		n++;
+	} while (true);
 
+	closesocket(listen_socket);
+	freeaddrinfo(result);
+	WSACleanup();
+	return dwLastError;
+}
+VOID HandleClient(SOCKET client_socket)
+{
+	INT iResult = 0;
+	DWORD dwLastError = 0;
 	//7) Получение сообщения от клиента:
 	do
 	{
@@ -128,9 +151,4 @@ int main()
 		}
 	} while (iResult > 0);
 	closesocket(client_socket);
-	closesocket(listen_socket);
-	freeaddrinfo(result);
-	WSACleanup();
-
-	return dwLastError;
 }
