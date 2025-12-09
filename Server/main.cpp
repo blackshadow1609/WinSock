@@ -21,15 +21,15 @@ VOID HandleClient(SOCKET client_socket);
 int main()
 {
 	setlocale(LC_ALL, "");
-	DWORD dwLastError = 0;
 	INT iResult = 0;
+	DWORD dwLastError = 0;
 
 	//0) Инициализация WS:
 	WSADATA wsaData;
 	iResult = WSAStartup(MAKEWORD(2, 2), &wsaData);
 	if (iResult != 0)
 	{
-		cout << "WSA init failed with: " << dwLastError << endl;
+		cout << "WSA init failed with: " << iResult << endl;
 		return dwLastError;
 	}
 
@@ -100,6 +100,7 @@ int main()
 	do
 	{
 		client_sockets[n] = accept(listen_socket, NULL, NULL);
+		if (client_sockets[n] == INVALID_SOCKET)
 		{
 			dwLastError = WSAGetLastError();
 			cout << "Accept failed with error: " << dwLastError << endl;
@@ -108,10 +109,13 @@ int main()
 			WSACleanup();
 			return dwLastError;
 		}
-		//HandleClient(client_socket);
-		hThreads[n] = CreateThread(NULL, 0, HandleClient, client_sockets + n, 0, threadIDs + n);
+
+		hThreads[n] = CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE)HandleClient,
+			(LPVOID)client_sockets[n], 0, threadIDs + n);
 		n++;
 	} while (true);
+
+	WaitForMultipleObjects(n, hThreads, TRUE, INFINITE);
 
 	closesocket(listen_socket);
 	freeaddrinfo(result);
@@ -122,7 +126,18 @@ VOID HandleClient(SOCKET client_socket)
 {
 	INT iResult = 0;
 	DWORD dwLastError = 0;
+
 	//7) Получение сообщения от клиента:
+	sockaddr_in client_addr;
+	int addr_len = sizeof(client_addr);
+	getpeername(client_socket, (sockaddr*)&client_addr, &addr_len);
+
+	char client_ip[INET_ADDRSTRLEN];
+	inet_ntop(AF_INET, &client_addr.sin_addr, client_ip, INET_ADDRSTRLEN);
+	int client_port = ntohs(client_addr.sin_port);
+
+	cout << "Client connected: " << client_ip << ":" << client_port << endl;
+
 	do
 	{
 		CHAR send_buffer[BUFFER_LENGTH] = "Привет клиент";

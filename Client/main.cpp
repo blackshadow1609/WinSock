@@ -108,7 +108,6 @@ int main()
 		cin.getline(send_buffer, BUFFER_LENGTH);
 		SetConsoleCP(866);
 	} while (strstr(send_buffer, "exit") == 0 && strstr(send_buffer, "quit") == 0);
-	//} while (strcmp(send_buffer, "exit") != 0 && strcmp(send_buffer, "quit") != 0);
 
 	//7) Отключение от сервера:
 	iResult = shutdown(connect_socket, SD_SEND);
