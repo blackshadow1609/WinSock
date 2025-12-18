@@ -7,6 +7,8 @@
 #include <ws2tcpip.h>
 #include <iphlpapi.h>
 #include <iostream>
+#include <vector>
+#include <string>
 
 using namespace std;
 
@@ -15,15 +17,19 @@ using namespace std;
 #define DEFAULT_PORT "27015"
 #define BUFFER_LENGTH 1460
 #define MAX_CLIENTS		 3
-#define g_sz_SORRY "Error: Количество пдключений превышено"
+#define g_sz_SORRY "Error: Количество подключений превышено"
 #define IP_STR_MAX_LENGTH 16
 
+// Глобальные переменные
 INT n = 0;			//количество активных клиентов
 SOCKET client_sockets[MAX_CLIENTS] = {};
 DWORD threadIDs[MAX_CLIENTS] = {};
 HANDLE hThreads[MAX_CLIENTS] = {};
+CRITICAL_SECTION cs; // Критическая секция для синхронизации
 
-VOID WINAPI HandleClient(SOCKET client_socket);
+VOID WINAPI HandleClient(LPVOID lpParam);
+VOID BroadcastMessage(const CHAR* message, SOCKET sender_socket);
+VOID PrintClientsInfo();
 
 int main()
 {
@@ -31,13 +37,17 @@ int main()
 	DWORD dwLastError = 0;
 	INT iResult = 0;
 
+	// Инициализация критической секции
+	InitializeCriticalSection(&cs);
+
 	//0) Инициализация WS:
 	WSADATA wsaData;
 	iResult = WSAStartup(MAKEWORD(2, 2), &wsaData);
 	if (iResult != 0)
 	{
-		cout << "WSA init failed with: " << dwLastError << endl;
-		return dwLastError;
+		cout << "WSA init failed with: " << iResult << endl;
+		DeleteCriticalSection(&cs);
+		return iResult;
 	}
 
 	//1) Инициализация переменных для Сокета:
@@ -55,10 +65,10 @@ int main()
 	if (iResult != 0)
 	{
 		dwLastError = WSAGetLastError();
-		cout << "getaddrinfo failed with error: " << dwLastError << endl;
-		freeaddrinfo(result);
+		cout << "getaddrinfo failed with error: " << iResult << endl;
+		DeleteCriticalSection(&cs);
 		WSACleanup();
-		return dwLastError;
+		return iResult;
 	}
 
 	//3) Создание Сокета:
@@ -68,6 +78,7 @@ int main()
 		dwLastError = WSAGetLastError();
 		cout << "Socket creation failed with error: " << dwLastError << endl;
 		freeaddrinfo(result);
+		DeleteCriticalSection(&cs);
 		WSACleanup();
 		return dwLastError;
 	}
@@ -80,6 +91,7 @@ int main()
 		cout << "Bind failed with error: " << dwLastError << endl;
 		closesocket(listen_socket);
 		freeaddrinfo(result);
+		DeleteCriticalSection(&cs);
 		WSACleanup();
 		return dwLastError;
 	}
@@ -92,122 +104,224 @@ int main()
 		cout << "Listen failed with error: " << dwLastError << endl;
 		closesocket(listen_socket);
 		freeaddrinfo(result);
+		DeleteCriticalSection(&cs);
 		WSACleanup();
 		return dwLastError;
 	}
 
+	// Инициализация массива сокетов
+	for (int i = 0; i < MAX_CLIENTS; i++) {
+		client_sockets[i] = INVALID_SOCKET;
+		hThreads[i] = NULL;
+		threadIDs[i] = 0;
+	}
+
+	cout << "Сервер запущен. Ожидание подключений..." << endl;
+	cout << "Максимальное количество клиентов: " << MAX_CLIENTS << endl;
+	PrintClientsInfo();
+
 	//6) Обработка запроса от клиентов:
-	
-	cout << hThreads << endl;
-	cout << HandleClient << endl;
-	cout << "Accept client connections..." << endl;
 	do
 	{
 		SOCKET client_socket = accept(listen_socket, NULL, NULL);
-		/*if(client_sockets[n] == INVALID_SOCKET)
+		if (client_socket == INVALID_SOCKET)
 		{
 			dwLastError = WSAGetLastError();
 			cout << "Accept failed with error: " << dwLastError << endl;
-			closesocket(listen_socket);
-			freeaddrinfo(result);
-			WSACleanup();
-			return dwLastError;
-		}*/
-		//HandleClient(client_socket);
+			continue;
+		}
+
+		EnterCriticalSection(&cs);
+
 		if (n < MAX_CLIENTS)
 		{
-			client_sockets[n] = client_socket;
-			hThreads[n] = CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE)HandleClient, (LPVOID)client_sockets[n], 0, threadIDs + n);
-			n++;
+			// Поиск свободного слота
+			int freeSlot = -1;
+			for (int i = 0; i < MAX_CLIENTS; i++) {
+				if (client_sockets[i] == INVALID_SOCKET || client_sockets[i] == 0) {
+					freeSlot = i;
+					break;
+				}
+			}
+
+			if (freeSlot != -1) {
+				client_sockets[freeSlot] = client_socket;
+				hThreads[freeSlot] = CreateThread(NULL, 0,
+					(LPTHREAD_START_ROUTINE)HandleClient,
+					(LPVOID)client_socket, 0, &threadIDs[freeSlot]);
+
+				if (hThreads[freeSlot] == NULL) {
+					cout << "CreateThread failed: " << GetLastError() << endl;
+					closesocket(client_socket);
+					client_sockets[freeSlot] = INVALID_SOCKET;
+				}
+				else {
+					n++;
+					cout << "\nНовый клиент подключен!" << endl;
+					PrintClientsInfo();
+
+					// Отправляем приветственное сообщение новому клиенту
+					string welcomeMsg = "Добро пожаловать на сервер! Активных клиентов: " +
+						to_string(n) + ", свободных слотов: " +
+						to_string(MAX_CLIENTS - n);
+					send(client_socket, welcomeMsg.c_str(), welcomeMsg.length(), 0);
+				}
+			}
 		}
 		else
 		{
-			CHAR recv_buffer[BUFFER_LENGTH] = {};
-			INT iResult = recv(client_socket, recv_buffer, BUFFER_LENGTH, 0);
-			if (iResult > 0)
-			{
-				cout << "Bytes received: " << iResult << endl;
-				cout << "Message: " << recv_buffer << endl;
-				INT iSendResult = send(client_socket, g_sz_SORRY, strlen(g_sz_SORRY), 0);
-				closesocket(client_socket);
-			}
+			cout << "Отклонено подключение: достигнут лимит клиентов" << endl;
+			send(client_socket, g_sz_SORRY, strlen(g_sz_SORRY), 0);
+			closesocket(client_socket);
 		}
+
+		LeaveCriticalSection(&cs);
 	} while (true);
+
+	// Ожидание завершения всех потоков
 	WaitForMultipleObjects(MAX_CLIENTS, hThreads, TRUE, INFINITE);
+
+	// Закрытие дескрипторов потоков
+	for (int i = 0; i < MAX_CLIENTS; i++) {
+		if (hThreads[i] != NULL) {
+			CloseHandle(hThreads[i]);
+		}
+	}
 
 	closesocket(listen_socket);
 	freeaddrinfo(result);
+	DeleteCriticalSection(&cs);
 	WSACleanup();
-	return dwLastError;
+	return 0;
 }
+
 INT GetSlotIndex(DWORD dwID)
 {
 	for (int i = 0; i < MAX_CLIENTS; i++)
 	{
 		if (threadIDs[i] == dwID) return i;
 	}
+	return -1;
 }
 
 VOID Shift(INT start)
 {
-	for (INT i = start; i < MAX_CLIENTS; i++)
+	if (start < 0 || start >= MAX_CLIENTS) return;
+
+	for (INT i = start; i < MAX_CLIENTS - 1; i++)
 	{
 		client_sockets[i] = client_sockets[i + 1];
 		threadIDs[i] = threadIDs[i + 1];
 		hThreads[i] = hThreads[i + 1];
 	}
-	client_sockets[MAX_CLIENTS - 1] = NULL;
-	threadIDs[MAX_CLIENTS - 1] = NULL;
+	client_sockets[MAX_CLIENTS - 1] = INVALID_SOCKET;
+	threadIDs[MAX_CLIENTS - 1] = 0;
 	hThreads[MAX_CLIENTS - 1] = NULL;
 	n--;
 }
 
-VOID WINAPI HandleClient(SOCKET client_socket)
+VOID BroadcastMessage(const CHAR* message, SOCKET sender_socket)
 {
+	EnterCriticalSection(&cs);
+
+	string broadcastMsg = message;
+
+	for (int i = 0; i < MAX_CLIENTS; i++) {
+		if (client_sockets[i] != INVALID_SOCKET && client_sockets[i] != 0 &&
+			client_sockets[i] != sender_socket) {
+			send(client_sockets[i], broadcastMsg.c_str(), broadcastMsg.length(), 0);
+		}
+	}
+
+	LeaveCriticalSection(&cs);
+}
+
+VOID PrintClientsInfo()
+{
+	EnterCriticalSection(&cs);
+
+	cout << "\n=== Статус сервера ===" << endl;
+	cout << "Активных клиентов: " << n << endl;
+	cout << "Свободных слотов: " << (MAX_CLIENTS - n) << endl;
+	cout << "Список клиентов:" << endl;
+
+	bool hasClients = false;
+	for (int i = 0; i < MAX_CLIENTS; i++) {
+		if (client_sockets[i] != INVALID_SOCKET && client_sockets[i] != 0) {
+			cout << "  Клиент #" << (i + 1) << " (ID потока: " << threadIDs[i] << ")" << endl;
+			hasClients = true;
+		}
+	}
+
+	if (!hasClients) {
+		cout << "  Нет активных клиентов" << endl;
+	}
+
+	cout << "====================\n" << endl;
+
+	LeaveCriticalSection(&cs);
+}
+
+VOID WINAPI HandleClient(LPVOID lpParam)
+{
+	SOCKET client_socket = (SOCKET)lpParam;
+
 	SOCKADDR_IN peer{};
 	CHAR address[IP_STR_MAX_LENGTH] = {};
-	INT address_length = IP_STR_MAX_LENGTH;
+	INT address_length = sizeof(peer);
 	getpeername(client_socket, (SOCKADDR*)&peer, &address_length);
-	inet_ntop(AF_INET, &peer.sin_addr, address, address_length);
-	INT port = ((peer.sin_port & 0xFF) << 8) + (peer.sin_port >> 8);
-	cout << address << ":" << port << endl;
-	/////////////////////////////////////////
+	inet_ntop(AF_INET, &peer.sin_addr, address, IP_STR_MAX_LENGTH);
+	INT port = ntohs(peer.sin_port);
+
+	cout << "Клиент подключился: " << address << ":" << port << endl;
+
 	INT iResult = 0;
 	DWORD dwLastError = 0;
-	//7) Получение сообщения от клиента:
-		CHAR send_buffer[BUFFER_LENGTH] = "Привет клиент";
-		CHAR recv_buffer[BUFFER_LENGTH] = {};
+	CHAR recv_buffer[BUFFER_LENGTH] = {};
+
 	do
 	{
-		INT iSendResult = 0;
-		ZeroMemory(send_buffer, BUFFER_LENGTH);
 		ZeroMemory(recv_buffer, BUFFER_LENGTH);
 		iResult = recv(client_socket, recv_buffer, BUFFER_LENGTH, 0);
+
 		if (iResult > 0)
 		{
-			cout << iResult << "Bytes received from " << address << ":" << port << "-" << recv_buffer << endl;
-			iSendResult = send(client_socket, recv_buffer, strlen(recv_buffer), 0);
-			if (iSendResult == SOCKET_ERROR)
-			{
-				dwLastError = WSAGetLastError();
-				cout << "Send failed with error: " << dwLastError << endl;
-				break;
+			string fullMessage = string(address) + ":" + to_string(port) + " говорит: " + recv_buffer;
+
+			cout << fullMessage << endl;
+
+			send(client_socket, recv_buffer, strlen(recv_buffer), 0);
+
+			if (strstr(recv_buffer, "quit") == NULL && strstr(recv_buffer, "exit") == NULL) {
+				BroadcastMessage(fullMessage.c_str(), client_socket);
 			}
-			cout << "Bytes sent: " << iSendResult << endl;
+
+			PrintClientsInfo();
 		}
-		else if (iResult == 0) cout << "Connection closing" << endl;
+		else if (iResult == 0) {
+			cout << "Клиент " << address << ":" << port << " отключился" << endl;
+		}
 		else
 		{
 			dwLastError = WSAGetLastError();
 			cout << "Receive failed with error: " << dwLastError << endl;
 			break;
 		}
-	} while (iResult > 0 && !strstr(recv_buffer, "quit"));
-	DWORD dwID = GetCurrentThreadId();
-	Shift(GetSlotIndex(dwID));
-	cout << address << ":" << port << " leaved" << endl;
-	ExitThread(0);
-	//ExitThread(GetExitCodeThread());
-	closesocket(client_socket);
+	} while (iResult > 0 && strstr(recv_buffer, "quit") == NULL && strstr(recv_buffer, "exit") == NULL);
 
+	EnterCriticalSection(&cs);
+
+	DWORD dwID = GetCurrentThreadId();
+	INT slotIndex = GetSlotIndex(dwID);
+	if (slotIndex != -1) {
+		Shift(slotIndex);
+	}
+
+	cout << "Клиент " << address << ":" << port << " отключился" << endl;
+	PrintClientsInfo();
+
+	LeaveCriticalSection(&cs);
+
+	closesocket(client_socket);
+	ExitThread(0);
 }
